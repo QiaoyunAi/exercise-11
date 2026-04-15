@@ -1,0 +1,255 @@
+---
+title: "exercise-11"
+format: html
+author: Qiaoyun Ai
+---
+
+#### Hide unnecessary message
+
+```{r}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+#### **Preliminaries**
+
+```{r}
+library(tidyverse)
+library(skimr)
+library(naniar)
+library(broom)
+library(MuMIn)
+
+f <- "https://raw.githubusercontent.com/difiore/ada-datasets/main/Mammal_lifehistories_v2.txt"
+d <- read_tsv(f, col_names = TRUE)
+names (d)
+```
+
+#### Do a bit of exploratory data analysis with this dataset, e.g., using the {skimr} package.
+
+```{r}
+skim(d)
+```
+
+##### Q: Which of the variables are categorical and which are numeric?
+
+##### A: The variables order, family, Genus, and species are categorical, the rest are numeric.
+
+#### Step 1: Replace all values of -999 (the authors’ code for missing data) with `NA`.
+
+```{r}
+d <- d |> replace_with_na_all(condition = ~.x == -999)
+```
+
+#### Step 2
+
+```{r}
+# Drop the variables litter size and refs.
+d <- d |>
+    select(-c("litter size", "refs"))
+
+# Rename the variable max. life(mo) to maxlife(mo) & wean mass(g) to weanmass(g).
+d <- d |>
+    rename(`maxlife(mo)` = `max. life(mo)`) |>
+    rename(`weanmass(g)` = `wean mass(g)`)
+```
+
+#### Step 3
+
+#### Log transform all of the other numeric variables.
+
+```{r}
+d <- d |>
+    mutate(across(where(is.numeric), log))
+
+summary(d)
+```
+
+#### Step 4
+
+#### Regress the (now log transformed) *age* \[**gestation(mo)**, **weaning(mo)**, **AFR(mo)** (i.e., age at first reproduction), and **maxlife(mo)** (i.e., maximum lifespan)\] and *mass* \[**newborn(g)** and **weanmass(g)**\] variables on (now log transformed) overall body **mass(g)** and add the residuals to the dataframe as new variables \[**relGest**, **relWean**, **relAFR**, **relLife**, **relNewbornMass**, and **relWeaningMass**\].
+
+```{r}
+d$relGest <- resid(lm(`gestation(mo)` ~ `mass(g)`, data = d, na.action = na.exclude))
+d$relWean <- resid(lm(`weaning(mo)` ~ `mass(g)`, data = d, na.action = na.exclude))
+d$relAFR <- resid(lm(`AFR(mo)` ~ `mass(g)`, data = d, na.action = na.exclude))
+d$relLife <- resid(lm(`maxlife(mo)` ~ `mass(g)`, data = d, na.action = na.exclude))
+d$relNewbornMass <- resid(lm(`newborn(g)` ~ `mass(g)`, data = d, na.action = na.exclude))
+d$relWeaningMass <- resid(lm(`weanmass(g)` ~ `mass(g)`, data = d, na.action = na.exclude))
+```
+
+#### Step 5
+
+#### Plot residuals of max lifespan (**relLife**) in relation to **Order**.
+
+```{r}
+p1 <- ggplot(data = d, aes(x = order, y = relLife)) + geom_boxplot(na.rm = TRUE) +
+    geom_jitter(na.rm = TRUE, alpha = 0.1) + theme(axis.text.x = element_text(angle = 90))
+p1
+```
+
+##### Q: Which mammalian orders have the highest residual lifespan?
+
+##### A: Order Primates has the highest residual lifespan.
+
+#### Plot residuals of newborn mass (**relNewbornMass**) in relation to **Order**.
+
+```{r}
+p2 <- ggplot(data = d, aes(x = order, y = relNewbornMass)) + geom_boxplot(na.rm = TRUE) +
+    geom_jitter(na.rm = TRUE, alpha = 0.1) + theme(axis.text.x = element_text(angle = 90))
+p2
+```
+
+##### Q: Which mammalian orders have the have highest residual newborn mass?
+
+##### A: Orders Macroscelidae and Cetacea have the highest residual newborn mass.
+
+#### Plot residuals of weaning mass (**relWeaningMass**) in relation to **Order**.
+
+```{r}
+p3 <- ggplot(data = d, aes(x = order, y = relWeaningMass)) + geom_boxplot(na.rm = TRUE) +
+    geom_jitter(na.rm = TRUE, alpha = 0.1) + theme(axis.text.x = element_text(angle = 90))
+p3
+```
+
+##### Q: Which mammalian orders have the have highest residual weaning mass?
+
+##### A: Order Perrisodactyla has the highest residual weaning mass.
+
+#### Step 6
+
+#### Run models and a model selection process to evaluate what (now log transformed) variables best predict each of the two response variables, **maxlife(mo)** and **AFR(mo)**, from the set of the following predictors: **gestation(mo)**, **newborn(g)**, **weaning(mo)**, **weanmass(g)**, **litters/year**, and overall body **mass(g)**.
+
+#### For maxLife
+
+```{r}
+# maxLife
+# maxlife dataset
+d_life <- d %>%
+  drop_na(`maxlife(mo)`, `gestation(mo)`, `newborn(g)`,
+          `weaning(mo)`, `weanmass(g)`,
+          `litters/year`, `mass(g)`)
+
+# Full and null models
+ML_full <- lm(`maxlife(mo)` ~ `gestation(mo)` + `newborn(g)` +
+                `weaning(mo)` + `weanmass(g)` +
+                `litters/year` + `mass(g)`,
+              data = d_life, na.action = na.fail)
+summary(ML_full)
+
+ML_null <- lm(`maxlife(mo)` ~ 1, data = d_life, na.action = na.fail)
+
+# Backward selection
+drop1(ML_full, test = "F")
+b2 <- update(ML_full, . ~ . - `weanmass(g)`)
+drop1(b2, test = "F")
+b3 <- update(b2, . ~ . - `newborn(g)`)
+drop1(b3, test = "F")
+
+# Forward selection
+add1(ML_null,
+     . ~ . + `gestation(mo)` + `newborn(g)` +
+       `weaning(mo)` + `weanmass(g)` +
+       `litters/year` + `mass(g)`,
+     test = "F")
+f2 <- update(ML_null, . ~ . + `gestation(mo)`)
+add1(f2,
+     . ~ . + `newborn(g)` + `weaning(mo)` +
+       `weanmass(g)` + `litters/year` + `mass(g)`,
+     test = "F")
+f3 <- update(f2, . ~ . + `litters/year`)
+add1(f3,
+     . ~ . + `newborn(g)` + `weaning(mo)` +
+       `weanmass(g)` + `mass(g)`,
+     test = "F")
+f4 <- update(f3, . ~ . + `mass(g)`)
+add1(f4,
+     . ~ . + `newborn(g)` + `weaning(mo)` + `weanmass(g)`,
+     test = "F")
+f5 <- update(f4, . ~ . + `weaning(mo)`)
+add1(f5, . ~ . + `newborn(g)` + `weanmass(g)`, test = "F")
+
+# using AICc
+ML_mods <- dredge(ML_full)
+head(coef(ML_mods), 10)
+
+(ML_mods.avg <- summary(model.avg(ML_mods, subset = delta < 4)))
+
+# Calculate and plot the model-averaged coefficients and their CIs across this set of top models
+confint(ML_mods.avg)
+plot(ML_mods.avg, full = TRUE, intercept = FALSE)
+```
+
+#### For AFR
+
+```{r}
+# AFR
+# AFR dataset
+d_afr <- d %>%
+  drop_na(`AFR(mo)`, `gestation(mo)`, `newborn(g)`,
+          `weaning(mo)`, `weanmass(g)`,
+          `litters/year`, `mass(g)`)
+
+# Full and null models
+AFR_full <- lm(`AFR(mo)` ~ `gestation(mo)` + `newborn(g)` +
+                 `weaning(mo)` + `weanmass(g)` +
+                 `litters/year` + `mass(g)`,
+               data = d_afr, na.action = na.fail)
+summary(AFR_full)
+
+AFR_null <- lm(`AFR(mo)` ~ 1, data = d_afr, na.action = na.fail)
+
+# Backward selection
+drop1(AFR_full, test = "F")
+b2 <- update(AFR_full, . ~ . - `weanmass(g)`)
+drop1(b2, test = "F")
+b3 <- update(b2, . ~ . - `newborn(g)`)
+drop1(b3, test = "F")
+
+# Forward selection
+add1(AFR_null,
+     . ~ . + `gestation(mo)` + `newborn(g)` +
+       `weaning(mo)` + `weanmass(g)` +
+       `litters/year` + `mass(g)`,
+     test = "F")
+f2 <- update(AFR_null, . ~ . + `litters/year`)
+add1(f2,
+     . ~ . + `gestation(mo)` + `newborn(g)` +
+       `weaning(mo)` + `weanmass(g)` + `mass(g)`,
+     test = "F")
+f3 <- update(f2, . ~ . + `gestation(mo)`)
+add1(f3,
+     . ~ . + `newborn(g)` + `weaning(mo)` +
+       `weanmass(g)` + `mass(g)`,
+     test = "F")
+f4 <- update(f3, . ~ . + `weanmass(g)`)
+add1(f4,
+     . ~ . + `newborn(g)` + `weaning(mo)` + `mass(g)`,
+     test = "F")
+f5 <- update(f4, . ~ . + `weaning(mo)`)
+add1(f5, . ~ . + `newborn(g)` + `mass(g)`, test = "F")
+
+# using AICc
+AFR_mods <- dredge(AFR_full)
+head(coef(AFR_mods), 10)
+
+(AFR_mods.avg <- summary(model.avg(AFR_mods, subset = delta < 4)))
+
+# Calculate and plot the model-averaged coefficients and their CIs across this set of top models
+confint(AFR_mods.avg)
+plot(AFR_mods.avg, full = TRUE, intercept = FALSE)
+```
+
+##### Q1: For each of the two response variables, indicate what is the best model overall based on AICc and how many models have a delta AICc of 4 or less?
+
+##### A: The best model for maxlife(mo) is maxlife(mo) \~ gestation(mo) + litters/year + mass(g) + weaning(mo). Five models have delta AICc of 4 or less
+
+##### The best model for AFR(mo) is AFR(mo) \~ gestation(mo) + litters/year + mass(g) + weaning(mo). Seven models have delta AICc of 4 or less
+
+##### Q2: What variables, if any, appear in all of this set of “top” models?
+
+##### A: For maxlife(mo), the variables present in all top models are: gestation(mo), litters/year, mass(g), and weaning(mo)
+
+##### For AFR(mo), the variables present in all top models are: gestation(mo), litters/year, and weaning(mo)
